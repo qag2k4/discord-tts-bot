@@ -1,85 +1,148 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 from gtts import gTTS
 import os
 import asyncio
 from keep_alive import keep_alive  # Import server để giữ bot sống trên Render
 
 # --- CẤU HÌNH BOT ---
-# Lấy Token từ biến môi trường trên Render
 TOKEN = os.getenv("TOKEN")
 
+# Bật tất cả quyền cần thiết
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-@bot.event
-async def on_ready():
-    print(f"✅ Bot đã online: {bot.user}")
+# Biến lưu trạng thái kênh nào đang bật Auto
+auto_channels = {} 
 
-@bot.command()
-async def say(ctx, *, text):
-    # 1. Kiểm tra người dùng có trong voice channel không
-    if ctx.author.voice is None:
-        await ctx.send("❌ Bạn phải vào voice channel trước.")
-        return
-
-    channel = ctx.author.voice.channel
-    voice_client = ctx.voice_client
-
-    # 2. Bot kết nối vào kênh (hoặc chuyển kênh)
-    if voice_client is None:
-        voice_client = await channel.connect()
-    elif voice_client.channel != channel:
-        await voice_client.move_to(channel)
-
-    # 3. Tạo file âm thanh từ văn bản
-    file_path = "tts.mp3"
-    try:
-        tts = gTTS(text=text, lang="vi")
-        tts.save(file_path)
-    except Exception as e:
-        await ctx.send(f"❌ Lỗi tạo giọng nói: {e}")
-        return
-
-    # 4. Dừng âm thanh cũ nếu đang phát
-    if voice_client.is_playing():
-        voice_client.stop()
-
-    # 5. XÁC ĐỊNH ĐƯỜNG DẪN FFMPEG (Quan trọng cho Render)
-    # Nếu file build.sh chạy đúng, ffmpeg sẽ nằm ở ./bin/ffmpeg
+# --- HÀM XỬ LÝ TTS (Dùng chung cho cả lệnh và Auto) ---
+async def play_tts(voice_client, text, ctx_or_interaction):
+    # Xác định FFmpeg cho Render
     if os.path.exists("./bin/ffmpeg"):
         ffmpeg_executable = "./bin/ffmpeg"
     else:
-        # Dự phòng cho trường hợp chạy trên máy tính cá nhân
         ffmpeg_executable = "ffmpeg"
 
-    # 6. Phát âm thanh
+    file_path = f"tts_{voice_client.channel.id}.mp3"
+
     try:
-        # Hàm này sẽ chạy sau khi bot nói xong để xóa file
+        # Tạo file âm thanh
+        tts = gTTS(text=text, lang="vi")
+        tts.save(file_path)
+
+        # Nếu đang nói dở thì dừng để nói câu mới (hoặc bạn có thể code thêm hàng chờ nếu muốn)
+        if voice_client.is_playing():
+            voice_client.stop()
+
+        # Hàm xóa file sau khi đọc xong
         def after_playing(error):
             if os.path.exists(file_path):
                 os.remove(file_path)
             if error:
-                print(f"Lỗi khi phát: {error}")
+                print(f"Lỗi playback: {error}")
 
-        # Truyền đường dẫn executable vào đây để Render nhận diện được FFmpeg
         source = discord.FFmpegPCMAudio(file_path, executable=ffmpeg_executable)
         voice_client.play(source, after=after_playing)
-        
-        await ctx.send(f"🔊 Đang nói: **{text}**")
-
+    
     except Exception as e:
-        await ctx.send("❌ Lỗi phát âm thanh. Có thể do Render chưa cài được FFmpeg.")
-        print(f"Chi tiết lỗi: {e}")
+        print(f"Lỗi TTS: {e}")
+        # Gửi thông báo lỗi (kiểm tra xem là ctx hay interaction để gửi đúng cách)
+        msg = f"❌ Lỗi: {e}"
+        if isinstance(ctx_or_interaction, discord.Interaction):
+            await ctx_or_interaction.followup.send(msg, ephemeral=True)
+        else:
+            await ctx_or_interaction.send(msg)
 
-# --- WEB SERVER (Giữ bot sống) ---
+# --- SỰ KIỆN KHI BOT ONLINE ---
+@bot.event
+async def on_ready():
+    print(f"✅ Bot đã online: {bot.user}")
+    try:
+        # ĐỒNG BỘ LỆNH SLASH (QUAN TRỌNG ĐỂ HIỆN DẤU /)
+        synced = await bot.tree.sync()
+        print(f"✅ Đã đồng bộ {len(synced)} lệnh Slash Command.")
+    except Exception as e:
+        print(f"❌ Lỗi đồng bộ lệnh: {e}")
+
+# --- SỰ KIỆN TỰ ĐỘNG ĐỌC TIN NHẮN (AUTO) ---
+@bot.event
+async def on_message(message):
+    # Không để bot tự đọc tin nhắn của chính nó hoặc bot khác
+    if message.author.bot:
+        return
+
+    # Kiểm tra xem kênh này có đang bật Auto không
+    if message.channel.id in auto_channels and auto_channels[message.channel.id] is True:
+        if message.author.voice: # Chỉ đọc nếu người chat đang ở trong voice
+            voice_channel = message.author.voice.channel
+            voice_client = message.guild.voice_client
+
+            # Nếu bot chưa vào, hoặc đang ở phòng khác -> Kéo bot về
+            if voice_client is None:
+                voice_client = await voice_channel.connect()
+            elif voice_client.channel != voice_channel:
+                await voice_client.move_to(voice_channel)
+            
+            # Đọc nội dung tin nhắn
+            await play_tts(voice_client, message.content, message.channel)
+
+    # Dòng này để bot vẫn hiểu lệnh prefix cũ (!) nếu cần
+    await bot.process_commands(message)
+
+# ================= CÁC LỆNH SLASH COMMAND (DÙNG /) =================
+
+# 1. Lệnh nói thủ công: /noi [nội dung]
+@bot.tree.command(name="noi", description="Đọc văn bản thành tiếng (Chị Google)")
+@app_commands.describe(text="Nội dung muốn nói")
+async def noi(interaction: discord.Interaction, text: str):
+    if interaction.user.voice is None:
+        await interaction.response.send_message("❌ Bạn chưa vào phòng Voice!", ephemeral=True)
+        return
+
+    await interaction.response.defer() # Báo cho Discord biết bot đang xử lý (tránh lỗi 'The application did not respond')
+    
+    voice_channel = interaction.user.voice.channel
+    voice_client = interaction.guild.voice_client
+
+    if voice_client is None:
+        voice_client = await voice_channel.connect()
+    elif voice_client.channel != voice_channel:
+        await voice_client.move_to(voice_channel)
+
+    await interaction.followup.send(f"🗣️ **{interaction.user.name}** nói: {text}")
+    await play_tts(voice_client, text, interaction)
+
+# 2. Lệnh bật chế độ tự động: /auto
+@bot.tree.command(name="auto", description="Bật/Tắt chế độ tự động đọc tin nhắn trong kênh này")
+async def auto(interaction: discord.Interaction):
+    channel_id = interaction.channel_id
+    current_status = auto_channels.get(channel_id, False)
+    
+    if current_status:
+        auto_channels[channel_id] = False
+        await interaction.response.send_message("🔕 Đã **TẮT** chế độ tự động đọc tại kênh này.")
+    else:
+        auto_channels[channel_id] = True
+        await interaction.response.send_message("🔔 Đã **BẬT** chế độ tự động đọc! (Chỉ cần chat, bot sẽ tự nói).")
+
+# 3. Lệnh đuổi bot: /cut
+@bot.tree.command(name="cut", description="Đuổi bot ra khỏi phòng Voice")
+async def cut(interaction: discord.Interaction):
+    if interaction.guild.voice_client:
+        await interaction.guild.voice_client.disconnect()
+        await interaction.response.send_message("👋 Bye bye!", ephemeral=False)
+    else:
+        await interaction.response.send_message("❌ Tôi có đang ở trong phòng nào đâu?", ephemeral=True)
+
+# --- WEB SERVER ---
 keep_alive()
 
 # --- CHẠY BOT ---
 if TOKEN:
     bot.run(TOKEN)
 else:
-    print("❌ Lỗi: Chưa có TOKEN trong Environment Variables!")
+    print("❌ Lỗi: Chưa có TOKEN")
