@@ -3,16 +3,9 @@ from discord.ext import commands
 from gtts import gTTS
 import os
 import asyncio
+from keep_alive import keep_alive  # Import server để giữ bot sống
 
-# Kiểm tra xem file keep_alive có tồn tại không để tránh lỗi import
-try:
-    from keep_alive import keep_alive
-    HAS_KEEP_ALIVE = True
-except ImportError:
-    HAS_KEEP_ALIVE = False
-    print("⚠️ Không tìm thấy module keep_alive. Bot sẽ chạy cục bộ.")
-
-# Lấy token từ biến môi trường
+# --- CẤU HÌNH BOT ---
 TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
@@ -27,7 +20,7 @@ async def on_ready():
 
 @bot.command()
 async def say(ctx, *, text):
-    # 1. Kiểm tra người dùng có trong voice không
+    # 1. Kiểm tra người dùng có trong voice channel không
     if ctx.author.voice is None:
         await ctx.send("❌ Bạn phải vào voice channel trước.")
         return
@@ -35,13 +28,13 @@ async def say(ctx, *, text):
     channel = ctx.author.voice.channel
     voice_client = ctx.voice_client
 
-    # 2. Kết nối hoặc chuyển kênh
+    # 2. Bot kết nối vào kênh
     if voice_client is None:
         voice_client = await channel.connect()
     elif voice_client.channel != channel:
         await voice_client.move_to(channel)
 
-    # 3. Tạo file âm thanh
+    # 3. Tạo file âm thanh từ văn bản
     file_path = "tts.mp3"
     try:
         tts = gTTS(text=text, lang="vi")
@@ -54,27 +47,36 @@ async def say(ctx, *, text):
     if voice_client.is_playing():
         voice_client.stop()
 
-    # 5. Phát âm thanh
+    # 5. Cấu hình FFmpeg cho Render vs Máy tính thường
+    # Render chạy file build.sh sẽ lưu ffmpeg ở ./bin/ffmpeg
+    if os.path.exists("./bin/ffmpeg"):
+        ffmpeg_executable = "./bin/ffmpeg"
+    else:
+        # Trên máy tính cá nhân nếu đã cài environment path
+        ffmpeg_executable = "ffmpeg" 
+
+    # 6. Phát âm thanh
     try:
-        # Hàm callback để xóa file sau khi phát xong
+        # Hàm callback: Tự động xóa file sau khi đọc xong
         def after_playing(error):
             if os.path.exists(file_path):
                 os.remove(file_path)
             if error:
                 print(f"Lỗi khi phát: {error}")
 
-        # Kiểm tra FFmpeg (Quan trọng)
-        source = discord.FFmpegPCMAudio(file_path)
+        # Tạo source âm thanh với đường dẫn FFmpeg chính xác
+        source = discord.FFmpegPCMAudio(file_path, executable=ffmpeg_executable)
         voice_client.play(source, after=after_playing)
+        
+        await ctx.send(f"🔊 Đang nói: **{text}**")
 
     except Exception as e:
-        await ctx.send("❌ Lỗi phát âm thanh. Hãy chắc chắn server đã cài FFmpeg.")
+        await ctx.send("❌ Lỗi phát âm thanh. Hãy kiểm tra lại file build.sh trên Render.")
         print(f"Chi tiết lỗi FFmpeg: {e}")
 
-# --- WEB SERVER (Cho Replit/Uptimerobot) ---
-if HAS_KEEP_ALIVE:
-    keep_alive()
-# -------------------------------------------
+# --- WEB SERVER (Bắt buộc cho Render/Replit) ---
+keep_alive()
+# ----------------------------------------------
 
 if TOKEN:
     bot.run(TOKEN)
