@@ -29,10 +29,11 @@ async def say(ctx, *, text):
     vc.play(discord.FFmpegPCMAudio("tts.mp3"))
 
     while vc.is_playing():
-        await discord.utils.sleep_until(discord.utils.utcnow() + discord.utils.timedelta(seconds=1))
+        await discord.utils.sleep_until(
+            discord.utils.utcnow() + discord.utils.timedelta(seconds=1)
+        )
 
     await vc.disconnect()
     os.remove("tts.mp3")
-
 
 bot.run(TOKEN)
