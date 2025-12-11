@@ -3,9 +3,10 @@ from discord.ext import commands
 from gtts import gTTS
 import os
 import asyncio
-from keep_alive import keep_alive  # Import server để giữ bot sống
+from keep_alive import keep_alive  # Import server để giữ bot sống trên Render
 
 # --- CẤU HÌNH BOT ---
+# Lấy Token từ biến môi trường trên Render
 TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
@@ -28,7 +29,7 @@ async def say(ctx, *, text):
     channel = ctx.author.voice.channel
     voice_client = ctx.voice_client
 
-    # 2. Bot kết nối vào kênh
+    # 2. Bot kết nối vào kênh (hoặc chuyển kênh)
     if voice_client is None:
         voice_client = await channel.connect()
     elif voice_client.channel != channel:
@@ -47,37 +48,37 @@ async def say(ctx, *, text):
     if voice_client.is_playing():
         voice_client.stop()
 
-    # 5. Cấu hình FFmpeg cho Render vs Máy tính thường
-    # Render chạy file build.sh sẽ lưu ffmpeg ở ./bin/ffmpeg
+    # 5. XÁC ĐỊNH ĐƯỜNG DẪN FFMPEG (Quan trọng cho Render)
+    # Nếu file build.sh chạy đúng, ffmpeg sẽ nằm ở ./bin/ffmpeg
     if os.path.exists("./bin/ffmpeg"):
         ffmpeg_executable = "./bin/ffmpeg"
     else:
-        # Trên máy tính cá nhân nếu đã cài environment path
-        ffmpeg_executable = "ffmpeg" 
+        # Dự phòng cho trường hợp chạy trên máy tính cá nhân
+        ffmpeg_executable = "ffmpeg"
 
     # 6. Phát âm thanh
     try:
-        # Hàm callback: Tự động xóa file sau khi đọc xong
+        # Hàm này sẽ chạy sau khi bot nói xong để xóa file
         def after_playing(error):
             if os.path.exists(file_path):
                 os.remove(file_path)
             if error:
                 print(f"Lỗi khi phát: {error}")
 
-        # Tạo source âm thanh với đường dẫn FFmpeg chính xác
+        # Truyền đường dẫn executable vào đây để Render nhận diện được FFmpeg
         source = discord.FFmpegPCMAudio(file_path, executable=ffmpeg_executable)
         voice_client.play(source, after=after_playing)
         
         await ctx.send(f"🔊 Đang nói: **{text}**")
 
     except Exception as e:
-        await ctx.send("❌ Lỗi phát âm thanh. Hãy kiểm tra lại file build.sh trên Render.")
-        print(f"Chi tiết lỗi FFmpeg: {e}")
+        await ctx.send("❌ Lỗi phát âm thanh. Có thể do Render chưa cài được FFmpeg.")
+        print(f"Chi tiết lỗi: {e}")
 
-# --- WEB SERVER (Bắt buộc cho Render/Replit) ---
+# --- WEB SERVER (Giữ bot sống) ---
 keep_alive()
-# ----------------------------------------------
 
+# --- CHẠY BOT ---
 if TOKEN:
     bot.run(TOKEN)
 else:
