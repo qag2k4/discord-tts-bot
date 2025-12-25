@@ -2,4 +2,4 @@
 nixPkgs = ["ffmpeg", "python311"]
 
 [start]
-cmd = "python main.py"
+cmd = "bash -lc 'python main.py'"
