@@ -4,13 +4,13 @@ from discord import app_commands
 from gtts import gTTS
 import os
 
-# ========= CẤU HÌNH =========
+# ========= TOKEN =========
 TOKEN = os.getenv("TOKEN")
-
 if not TOKEN:
     print("❌ Lỗi: Chưa có TOKEN")
     exit(1)
 
+# ========= INTENTS =========
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
@@ -22,7 +22,6 @@ auto_channels = {}
 
 # ========= HÀM TTS =========
 async def play_tts(voice_client: discord.VoiceClient, text: str):
-    ffmpeg_executable = "ffmpeg"
     file_path = f"tts_{voice_client.channel.id}.mp3"
 
     try:
@@ -36,18 +35,16 @@ async def play_tts(voice_client: discord.VoiceClient, text: str):
             if os.path.exists(file_path):
                 os.remove(file_path)
             if error:
-                print(f"❌ Lỗi phát âm thanh: {error}")
+                print(f"❌ Lỗi phát audio: {error}")
 
-        source = discord.FFmpegPCMAudio(
-            file_path,
-            executable=ffmpeg_executable
-        )
+        # ⚠️ KHÔNG chỉ định executable -> dùng ffmpeg hệ thống
+        source = discord.FFmpegPCMAudio(file_path)
         voice_client.play(source, after=after_playing)
 
     except Exception as e:
         print(f"❌ Lỗi TTS: {e}")
 
-# ========= SỰ KIỆN =========
+# ========= EVENTS =========
 @bot.event
 async def on_ready():
     print(f"✅ Bot đã online: {bot.user}")
@@ -76,7 +73,7 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
-# ========= SLASH COMMAND =========
+# ========= SLASH COMMANDS =========
 
 @bot.tree.command(name="noi", description="Đọc văn bản thành tiếng")
 @app_commands.describe(text="Nội dung muốn đọc")
@@ -129,5 +126,5 @@ async def cut(interaction: discord.Interaction):
             ephemeral=True
         )
 
-# ========= CHẠY BOT =========
+# ========= RUN =========
 bot.run(TOKEN)
