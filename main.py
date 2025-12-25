@@ -4,47 +4,44 @@ from discord import app_commands
 from gtts import gTTS
 import os
 
-# ========= TOKEN =========
+# ================== CẤU HÌNH ==================
 TOKEN = os.getenv("TOKEN")
-if not TOKEN:
-    print("❌ Lỗi: Chưa có TOKEN")
-    exit(1)
 
-# ========= INTENTS =========
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Lưu trạng thái auto TTS theo channel
+# Lưu trạng thái auto đọc theo channel
 auto_channels = {}
 
-# ========= HÀM TTS =========
+# ================== HÀM TTS ==================
 async def play_tts(voice_client: discord.VoiceClient, text: str):
-    file_path = f"tts_{voice_client.channel.id}.mp3"
+    file_path = f"/tmp/tts_{voice_client.channel.id}.mp3"
 
     try:
+        # Tạo file mp3
         tts = gTTS(text=text, lang="vi")
         tts.save(file_path)
 
+        # Nếu đang nói thì dừng
         if voice_client.is_playing():
             voice_client.stop()
 
-        def after_playing(error):
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            if error:
-                print(f"❌ Lỗi phát audio: {error}")
+        # Phát audio (ép dùng ffmpeg)
+        audio_source = discord.FFmpegPCMAudio(
+            source=file_path,
+            executable="ffmpeg",
+            options="-loglevel panic"
+        )
 
-        # ⚠️ KHÔNG chỉ định executable -> dùng ffmpeg từ nixpacks
-        source = discord.FFmpegPCMAudio(file_path)
-        voice_client.play(source, after=after_playing)
+        voice_client.play(audio_source)
 
     except Exception as e:
-        print(f"❌ Lỗi TTS: {e}")
+        print(f"❌ Lỗi TTS runtime: {e}")
 
-# ========= EVENTS =========
+# ================== SỰ KIỆN ==================
 @bot.event
 async def on_ready():
     print(f"✅ Bot đã online: {bot.user}")
@@ -59,7 +56,8 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    if auto_channels.get(message.channel.id):
+    # Auto đọc tin nhắn
+    if auto_channels.get(message.channel.id, False):
         if message.author.voice:
             voice_channel = message.author.voice.channel
             voice_client = message.guild.voice_client
@@ -73,14 +71,15 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
-# ========= SLASH COMMANDS =========
+# ================== SLASH COMMAND ==================
 
-@bot.tree.command(name="noi", description="Đọc văn bản thành tiếng")
-@app_commands.describe(text="Nội dung muốn đọc")
+# /noi
+@bot.tree.command(name="noi", description="Bot đọc nội dung bạn nhập")
+@app_commands.describe(text="Nội dung muốn bot đọc")
 async def noi(interaction: discord.Interaction, text: str):
     if interaction.user.voice is None:
         await interaction.response.send_message(
-            "❌ Bạn chưa vào phòng Voice!",
+            "❌ Bạn phải vào phòng voice trước",
             ephemeral=True
         )
         return
@@ -98,7 +97,8 @@ async def noi(interaction: discord.Interaction, text: str):
     await interaction.followup.send(f"🗣️ {text}")
     await play_tts(voice_client, text)
 
-@bot.tree.command(name="auto", description="Bật/Tắt tự động đọc tin nhắn")
+# /auto
+@bot.tree.command(name="auto", description="Bật/tắt tự động đọc tin nhắn trong kênh")
 async def auto(interaction: discord.Interaction):
     channel_id = interaction.channel_id
     current = auto_channels.get(channel_id, False)
@@ -106,25 +106,24 @@ async def auto(interaction: discord.Interaction):
     auto_channels[channel_id] = not current
 
     if current:
-        await interaction.response.send_message(
-            "🔕 Đã **TẮT** auto TTS trong kênh này"
-        )
+        await interaction.response.send_message("🔕 Đã tắt auto đọc")
     else:
-        await interaction.response.send_message(
-            "🔔 Đã **BẬT** auto TTS (chat là bot đọc)"
-        )
+        await interaction.response.send_message("🔔 Đã bật auto đọc")
 
+# /cut
 @bot.tree.command(name="cut", description="Đuổi bot khỏi phòng voice")
 async def cut(interaction: discord.Interaction):
-    vc = interaction.guild.voice_client
-    if vc:
-        await vc.disconnect()
-        await interaction.response.send_message("👋 Bye bye!")
+    if interaction.guild.voice_client:
+        await interaction.guild.voice_client.disconnect()
+        await interaction.response.send_message("👋 Bot đã rời phòng voice")
     else:
         await interaction.response.send_message(
-            "❌ Tôi không ở trong phòng nào",
+            "❌ Bot không ở trong phòng nào",
             ephemeral=True
         )
 
-# ========= RUN =========
-bot.run(TOKEN)
+# ================== RUN ==================
+if not TOKEN:
+    print("❌ Chưa có TOKEN trong Variables")
+else:
+    bot.run(TOKEN)
