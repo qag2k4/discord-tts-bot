@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from gtts import gTTS
 import os
+import shutil  # 👈 THƯ VIỆN CHUẨN, KHÔNG CẦN TẠO FILE RIÊNG
 
 # ================== CẤU HÌNH ==================
 TOKEN = os.getenv("TOKEN")
@@ -13,7 +14,6 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Lưu trạng thái auto đọc theo channel
 auto_channels = {}
 
 # ================== HÀM TTS ==================
@@ -25,14 +25,19 @@ async def play_tts(voice_client: discord.VoiceClient, text: str):
         tts = gTTS(text=text, lang="vi")
         tts.save(file_path)
 
-        # Nếu đang nói thì dừng
         if voice_client.is_playing():
             voice_client.stop()
 
-        # Phát audio (ép dùng ffmpeg)
+        # 🔍 TÌM ĐÚNG ffmpeg
+        ffmpeg_path = shutil.which("ffmpeg")
+        print("🔍 ffmpeg path:", ffmpeg_path)
+
+        if ffmpeg_path is None:
+            raise RuntimeError("Không tìm thấy ffmpeg trong PATH")
+
         audio_source = discord.FFmpegPCMAudio(
             source=file_path,
-            executable="ffmpeg",
+            executable=ffmpeg_path,
             options="-loglevel panic"
         )
 
@@ -56,7 +61,6 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # Auto đọc tin nhắn
     if auto_channels.get(message.channel.id, False):
         if message.author.voice:
             voice_channel = message.author.voice.channel
@@ -73,7 +77,6 @@ async def on_message(message: discord.Message):
 
 # ================== SLASH COMMAND ==================
 
-# /noi
 @bot.tree.command(name="noi", description="Bot đọc nội dung bạn nhập")
 @app_commands.describe(text="Nội dung muốn bot đọc")
 async def noi(interaction: discord.Interaction, text: str):
@@ -97,20 +100,16 @@ async def noi(interaction: discord.Interaction, text: str):
     await interaction.followup.send(f"🗣️ {text}")
     await play_tts(voice_client, text)
 
-# /auto
-@bot.tree.command(name="auto", description="Bật/tắt tự động đọc tin nhắn trong kênh")
+@bot.tree.command(name="auto", description="Bật/tắt tự động đọc tin nhắn")
 async def auto(interaction: discord.Interaction):
     channel_id = interaction.channel_id
-    current = auto_channels.get(channel_id, False)
+    auto_channels[channel_id] = not auto_channels.get(channel_id, False)
 
-    auto_channels[channel_id] = not current
-
-    if current:
-        await interaction.response.send_message("🔕 Đã tắt auto đọc")
-    else:
+    if auto_channels[channel_id]:
         await interaction.response.send_message("🔔 Đã bật auto đọc")
+    else:
+        await interaction.response.send_message("🔕 Đã tắt auto đọc")
 
-# /cut
 @bot.tree.command(name="cut", description="Đuổi bot khỏi phòng voice")
 async def cut(interaction: discord.Interaction):
     if interaction.guild.voice_client:
