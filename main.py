@@ -37,7 +37,7 @@ async def play_tts(voice_client: discord.VoiceClient, text: str):
             if error:
                 print(f"❌ Lỗi phát audio: {error}")
 
-        # ⚠️ KHÔNG chỉ định executable -> dùng ffmpeg hệ thống
+        # ⚠️ KHÔNG chỉ định executable -> dùng ffmpeg từ nixpacks
         source = discord.FFmpegPCMAudio(file_path)
         voice_client.play(source, after=after_playing)
 
