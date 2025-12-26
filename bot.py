@@ -6,7 +6,7 @@ from flask import Flask
 from gtts import gTTS
 import re
 
-# ================= FLASK (Render cần port) =================
+# ================= FLASK (GIỮ SERVICE SỐNG TRÊN RENDER) =================
 app = Flask(__name__)
 
 @app.route("/")
@@ -29,9 +29,8 @@ AUTO_TTS = False
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()   # 🔥 CỰC KỲ QUAN TRỌNG
+    await bot.tree.sync()
     print(f"✅ Bot online: {bot.user}")
-    print("✅ Slash commands synced")
 
 # ================= SLASH COMMANDS =================
 @bot.tree.command(name="auto", description="Bật auto TTS")
@@ -48,28 +47,30 @@ async def tat(interaction: discord.Interaction):
 
 @bot.tree.command(name="noi", description="Bot vào voice và nói")
 async def noi(interaction: discord.Interaction, text: str):
+    # ⏳ rất quan trọng: tránh lỗi 10062
+    await interaction.response.defer(thinking=True)
+
     if not interaction.user.voice:
-        await interaction.response.send_message(
-            "❌ Bạn phải vào voice trước", ephemeral=True
-        )
+        await interaction.followup.send("❌ Bạn chưa vào voice")
         return
 
-    await interaction.response.send_message("🗣️ Đang nói...")
-
     channel = interaction.user.voice.channel
+
     if not interaction.guild.voice_client:
         await channel.connect()
 
     speak(interaction.guild.voice_client, text)
 
+    await interaction.followup.send("🗣️ Đang nói...")
+
 # ================= TTS =================
 def clean_text(text: str) -> str:
-    text = re.sub(r"http\S+", "", text)
-    text = re.sub(r"<:.+?:\d+>", "", text)
-    text = re.sub(r"[^\w\sÀ-ỹ]", "", text)
+    text = re.sub(r"http\S+", "", text)        # bỏ link
+    text = re.sub(r"<:.+?:\d+>", "", text)     # bỏ emoji custom
+    text = re.sub(r"[^\w\sÀ-ỹ]", "", text)     # bỏ ký tự lạ
     return text.strip()
 
-def speak(vc, text):
+def speak(vc: discord.VoiceClient, text: str):
     text = clean_text(text)
     if not text:
         return
@@ -78,17 +79,28 @@ def speak(vc, text):
     tts.save("tts.mp3")
 
     if not vc.is_playing():
-        vc.play(discord.FFmpegPCMAudio("tts.mp3"))
+        vc.play(
+            discord.FFmpegPCMAudio(
+                "tts.mp3",
+                before_options="-loglevel panic",
+                options="-vn"
+            )
+        )
 
-# ================= AUTO MODE =================
+# ================= AUTO TTS =================
 @bot.event
-async def on_message(message):
+async def on_message(message: discord.Message):
     if message.author.bot or not AUTO_TTS:
         return
 
-    if message.author.voice and message.guild.voice_client:
+    if (
+        message.author.voice
+        and message.guild
+        and message.guild.voice_client
+    ):
         speak(message.guild.voice_client, message.content)
 
     await bot.process_commands(message)
 
+# ================= RUN =================
 bot.run(os.getenv("TOKEN"))
