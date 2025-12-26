@@ -5,8 +5,9 @@ import threading
 from flask import Flask
 from gtts import gTTS
 import re
+import subprocess
 
-# ================= Flask (giữ service sống) =================
+# ================= Flask (mở port cho Render) =================
 app = Flask(__name__)
 
 @app.route("/")
@@ -22,17 +23,26 @@ threading.Thread(target=run_flask, daemon=True).start()
 # ================= Discord Bot =================
 intents = discord.Intents.default()
 intents.message_content = True
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 AUTO_TTS = False
 AUDIO_FILE = "tts.mp3"
+FFMPEG_PATH = "/usr/bin/ffmpeg"  # ⚠️ RẤT QUAN TRỌNG TRÊN RENDER
 
 # ================= Events =================
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     print(f"✅ Bot online: {bot.user}")
+
+    # test ffmpeg
+    try:
+        subprocess.check_output([FFMPEG_PATH, "-version"])
+        print("✅ FFmpeg OK")
+    except Exception as e:
+        print("❌ FFmpeg FAIL:", e)
 
 # ================= Slash commands =================
 @bot.tree.command(name="auto", description="Bật auto nói")
@@ -49,7 +59,7 @@ async def tat(interaction: discord.Interaction):
 
 @bot.tree.command(name="noi", description="Bot vào voice và nói")
 async def noi(interaction: discord.Interaction, text: str):
-    await interaction.response.defer(thinking=False)
+    await interaction.response.defer()
 
     if not interaction.user.voice:
         await interaction.followup.send("❌ Bạn chưa vào voice", ephemeral=True)
@@ -66,9 +76,9 @@ async def noi(interaction: discord.Interaction, text: str):
 
 # ================= TTS =================
 def clean_text(text: str) -> str:
-    text = re.sub(r"http\S+", "", text)
-    text = re.sub(r"<:.+?:\d+>", "", text)
-    text = re.sub(r"[^\w\sÀ-ỹ]", "", text)
+    text = re.sub(r"http\S+", "", text)        # bỏ link
+    text = re.sub(r"<:.+?:\d+>", "", text)     # bỏ emoji custom
+    text = re.sub(r"[^\w\sÀ-ỹ]", "", text)     # bỏ ký tự lạ
     return text.strip()
 
 def speak(vc, text):
@@ -81,18 +91,22 @@ def speak(vc, text):
 
     gTTS(text=text, lang="vi").save(AUDIO_FILE)
 
-    vc.play(
-        discord.FFmpegPCMAudio(
-            AUDIO_FILE,
-            before_options="-loglevel quiet",
-            options="-vn"
-        )
+    source = discord.FFmpegPCMAudio(
+        AUDIO_FILE,
+        executable=FFMPEG_PATH,
+        before_options="-loglevel quiet",
+        options="-vn"
     )
+
+    vc.play(source)
 
 # ================= Auto TTS =================
 @bot.event
 async def on_message(message):
     if message.author.bot or not AUTO_TTS:
+        return
+
+    if not message.guild:
         return
 
     vc = message.guild.voice_client
