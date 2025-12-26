@@ -6,101 +6,101 @@ from flask import Flask
 from gtts import gTTS
 import re
 
-# ================= FLASK (GIỮ SERVICE SỐNG TRÊN RENDER) =================
+# ================= Flask (giữ service sống) =================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot is running"
+    return "OK"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 threading.Thread(target=run_flask, daemon=True).start()
 
-# ================= DISCORD BOT =================
+# ================= Discord Bot =================
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 AUTO_TTS = False
+AUDIO_FILE = "tts.mp3"
 
+# ================= Events =================
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     print(f"✅ Bot online: {bot.user}")
 
-# ================= SLASH COMMANDS =================
-@bot.tree.command(name="auto", description="Bật auto TTS")
+# ================= Slash commands =================
+@bot.tree.command(name="auto", description="Bật auto nói")
 async def auto(interaction: discord.Interaction):
     global AUTO_TTS
     AUTO_TTS = True
-    await interaction.response.send_message("🔊 Đã bật auto nói")
+    await interaction.response.send_message("🔊 Đã bật auto nói", ephemeral=True)
 
-@bot.tree.command(name="tat", description="Tắt auto TTS")
+@bot.tree.command(name="tat", description="Tắt auto nói")
 async def tat(interaction: discord.Interaction):
     global AUTO_TTS
     AUTO_TTS = False
-    await interaction.response.send_message("🔇 Đã tắt auto nói")
+    await interaction.response.send_message("🔇 Đã tắt auto nói", ephemeral=True)
 
 @bot.tree.command(name="noi", description="Bot vào voice và nói")
 async def noi(interaction: discord.Interaction, text: str):
-    # ⏳ rất quan trọng: tránh lỗi 10062
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=False)
 
     if not interaction.user.voice:
-        await interaction.followup.send("❌ Bạn chưa vào voice")
+        await interaction.followup.send("❌ Bạn chưa vào voice", ephemeral=True)
         return
 
     channel = interaction.user.voice.channel
+    vc = interaction.guild.voice_client
 
-    if not interaction.guild.voice_client:
-        await channel.connect()
+    if not vc:
+        vc = await channel.connect()
 
-    speak(interaction.guild.voice_client, text)
-
-    await interaction.followup.send("🗣️ Đang nói...")
+    speak(vc, text)
+    await interaction.followup.send("🗣️ Đang nói...", ephemeral=True)
 
 # ================= TTS =================
 def clean_text(text: str) -> str:
-    text = re.sub(r"http\S+", "", text)        # bỏ link
-    text = re.sub(r"<:.+?:\d+>", "", text)     # bỏ emoji custom
-    text = re.sub(r"[^\w\sÀ-ỹ]", "", text)     # bỏ ký tự lạ
+    text = re.sub(r"http\S+", "", text)
+    text = re.sub(r"<:.+?:\d+>", "", text)
+    text = re.sub(r"[^\w\sÀ-ỹ]", "", text)
     return text.strip()
 
-def speak(vc: discord.VoiceClient, text: str):
+def speak(vc, text):
+    if vc.is_playing():
+        return
+
     text = clean_text(text)
     if not text:
         return
 
-    tts = gTTS(text=text, lang="vi")
-    tts.save("tts.mp3")
+    gTTS(text=text, lang="vi").save(AUDIO_FILE)
 
-    if not vc.is_playing():
-        vc.play(
-            discord.FFmpegPCMAudio(
-                "tts.mp3",
-                before_options="-loglevel panic",
-                options="-vn"
-            )
+    vc.play(
+        discord.FFmpegPCMAudio(
+            AUDIO_FILE,
+            before_options="-loglevel quiet",
+            options="-vn"
         )
+    )
 
-# ================= AUTO TTS =================
+# ================= Auto TTS =================
 @bot.event
-async def on_message(message: discord.Message):
+async def on_message(message):
     if message.author.bot or not AUTO_TTS:
         return
 
-    if (
-        message.author.voice
-        and message.guild
-        and message.guild.voice_client
-    ):
-        speak(message.guild.voice_client, message.content)
+    vc = message.guild.voice_client
+    if not vc or not message.author.voice:
+        return
 
+    speak(vc, message.content)
     await bot.process_commands(message)
 
-# ================= RUN =================
+# ================= Run =================
 bot.run(os.getenv("TOKEN"))
